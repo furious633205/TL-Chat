@@ -112,33 +112,6 @@
         #send:hover {
             background-color: #5a6ec2;
         }
-        /* Ajout des éléments de l'appel */
-        #call-container {
-            display: none;
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            padding: 10px;
-            background-color: #7289da;
-            border-radius: 5px;
-            color: white;
-            cursor: pointer;
-        }
-        #call-buttons {
-            display: flex;
-            justify-content: space-between;
-        }
-        #call-buttons button {
-            background-color: #ff0000;
-            padding: 10px;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        #call-buttons button.accept {
-            background-color: #4CAF50;
-        }
     </style>
 </head>
 <body>
@@ -157,66 +130,75 @@
         </div>
     </div>
 
-    <!-- Container pour gérer l'appel -->
-    <div id="call-container">
-        <div id="call-buttons">
-            <button id="accept-call" class="accept">Accept</button>
-            <button id="reject-call">Reject</button>
-        </div>
-    </div>
-
     <script>
-        const ws = new WebSocket('ws://localhost:8080');
+        const ws = new WebSocket('ws://localhost:8080'); // Change to your server URL
         let username = '';
-        let localStream = null;
-        let remoteStream = null;
-        let peerConnection = null;
-        let currentChat = '';
+        let confirmChat = true;  // Default confirmation is true
 
-        const callContainer = document.getElementById('call-container');
-        const acceptButton = document.getElementById('accept-call');
-        const rejectButton = document.getElementById('reject-call');
+        // Fonction pour vérifier la préférence de confirmation
+        function checkConfirmation() {
+            const confirmation = localStorage.getItem('chatConfirmation');
+            if (confirmation !== null) {
+                confirmChat = confirmation === 'true'; // Si 'true' => confirmation active, sinon inactive
+            }
+        }
+
+        ws.onopen = () => {
+            console.log("WebSocket connection established.");
+        };
+
+        ws.onerror = (error) => {
+            console.log("WebSocket error:", error);
+        };
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
 
+            // Gestion de la liste d'utilisateurs
             if (data.type === 'user-list') {
                 const userList = document.getElementById('user-list');
                 userList.innerHTML = '';
                 data.users.forEach(user => {
                     if (user !== username) {
                         const userItem = document.createElement('div');
-                        userItem.textContent = `${user} `;
-                        const callButton = document.createElement('button');
-                        callButton.textContent = 'Call';
-                        callButton.onclick = () => requestCall(user);
-                        userItem.appendChild(callButton);
+                        userItem.textContent = user;
+                        userItem.onclick = () => requestChat(user);
                         userList.appendChild(userItem);
                     }
                 });
             }
 
-            if (data.type === 'call-request') {
-                showCallUI(data.from);
-            }
-
-            if (data.type === 'call-accepted') {
-                startCall(data.from);
-            }
-
-            if (data.type === 'call-rejected') {
-                alert(`${data.from} rejected your call.`);
-                stopCall();
-            }
-
+            // Gestion des messages de chat
             if (data.type === 'chat-message') {
                 const messages = document.getElementById('messages');
                 const message = document.createElement('div');
                 message.classList.add('message');
-                message.classList.add('from');
                 message.textContent = `${data.from}: ${data.message}`;
                 messages.appendChild(message);
                 messages.scrollTop = messages.scrollHeight;
+            }
+
+            // Gestion des demandes de chat
+            if (data.type === 'chat-request') {
+                checkConfirmation();  // Vérifier la préférence de confirmation
+
+                if (confirmChat) {
+                    // Affichage visuel pour accepter/refuser la discussion
+                    const confirmationDiv = document.createElement('div');
+                    confirmationDiv.classList.add('message');
+                    confirmationDiv.textContent = `${data.from} wants to chat. Do you accept?`;
+                    const acceptButton = document.createElement('button');
+                    acceptButton.textContent = 'Accept';
+                    acceptButton.onclick = () => startChat(data.from);
+                    const rejectButton = document.createElement('button');
+                    rejectButton.textContent = 'Reject';
+                    rejectButton.onclick = () => rejectChat();
+                    confirmationDiv.appendChild(acceptButton);
+                    confirmationDiv.appendChild(rejectButton);
+                    document.getElementById('messages').appendChild(confirmationDiv);
+                } else {
+                    startChat(data.from); // Démarrer la conversation sans confirmation
+                }
             }
         };
 
@@ -237,66 +219,25 @@
             }
         };
 
-        function requestCall(target) {
-            ws.send(JSON.stringify({ type: 'request-call', username, target }));
+        let currentChat = '';
+        function requestChat(target) {
+            // Demande de chat
+            ws.send(JSON.stringify({ type: 'request-chat', username, target }));
             currentChat = target;
         }
 
-        function showCallUI(from) {
-            callContainer.style.display = 'block';
-            acceptButton.onclick = () => acceptCall(from);
-            rejectButton.onclick = () => rejectCall(from);
+        function startChat(target) {
+            currentChat = target;
+            const messages = document.getElementById('messages');
+            messages.innerHTML = `<div class="message">Chat with ${target}</div>`;
         }
 
-        function acceptCall(from) {
-            callContainer.style.display = 'none';
-            peerConnection = new RTCPeerConnection();
-
-            // Accéder au microphone de l'utilisateur
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    localStream = stream;
-                    const audioTracks = localStream.getAudioTracks();
-                    if (audioTracks.length > 0) {
-                        peerConnection.addTrack(audioTracks[0], localStream);
-                    }
-                    peerConnection.createOffer()
-                        .then(offer => {
-                            return peerConnection.setLocalDescription(offer);
-                        })
-                        .then(() => {
-                            ws.send(JSON.stringify({ type: 'offer', username, target: from, offer: peerConnection.localDescription }));
-                        });
-                })
-                .catch(error => {
-                    console.error('Error accessing media devices.', error);
-                });
+        function rejectChat() {
+            const messages = document.getElementById('messages');
+            messages.innerHTML = `<div class="message">You rejected the chat request.</div>`;
         }
 
-        function rejectCall(from) {
-            ws.send(JSON.stringify({ type: 'reject-call', username, target: from }));
-            stopCall();
-        }
-
-        function startCall(from) {
-            peerConnection.ontrack = (event) => {
-                if (!remoteStream) {
-                    remoteStream = new MediaStream();
-                    remoteStream.addTrack(event.track);
-                    // Ici, tu peux ajouter une interface pour écouter l'appel vocal.
-                }
-            };
-        }
-
-        function stopCall() {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            callContainer.style.display = 'none';
-        }
+        checkConfirmation();  // Vérifier la confirmation dès le début
     </script>
 </body>
 </html>
