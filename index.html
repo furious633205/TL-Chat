@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #2c2f36;
+            margin: 0;
+            padding: 0;
+            color: #fff;
+        }
+        #login-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #3c4043;
+        }
+        #username {
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            width: 250px;
+            background: #1e2228;
+            color: #fff;
+        }
+        #connect {
+            padding: 10px 20px;
+            border: none;
+            background-color: #7289da;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        #connect:hover {
+            background-color: #5a6ec2;
+        }
+        #chat-container {
+            display: flex;
+            height: 100vh;
+            background: #23272a;
+        }
+        #user-list {
+            width: 250px;
+            background: #36393f;
+            border-right: 1px solid #444b53;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        #user-list div {
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            transition: background-color 0.3s;
+        }
+        #user-list div:hover {
+            background-color: #2f3136;
+        }
+        #messages {
+            flex: 1;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            border-left: 1px solid #444b53;
+        }
+        .message {
+            background: #40444b;
+            padding: 10px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            max-width: 70%;
+        }
+        .message.from {
+            align-self: flex-end;
+            background: #7289da;
+        }
+        #chat-input {
+            display: flex;
+            padding: 10px;
+            background: #2f3136;
+            border-top: 1px solid #444b53;
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #message {
+            flex: 1;
+            padding: 10px;
+            border-radius: 5px;
+            background: #3a3f47;
+            color: #fff;
+            border: none;
+        }
+        #send {
+            padding: 10px 20px;
+            background-color: #7289da;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        #send:hover {
+            background-color: #5a6ec2;
+        }
+        /* Ajout des éléments de l'appel */
+        #call-container {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            padding: 10px;
+            background-color: #7289da;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+        #call-buttons {
+            display: flex;
+            justify-content: space-between;
+        }
+        #call-buttons button {
+            background-color: #ff0000;
+            padding: 10px;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #call-buttons button.accept {
+            background-color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div id="login-container">
+        <h1>Connect to Chat</h1>
+        <input type="text" id="username" placeholder="Enter username">
+        <button id="connect">Connect</button>
+    </div>
+
+    <div id="chat-container" style="display: none;">
+        <div id="user-list"></div>
+        <div id="messages"></div>
+        <div id="chat-input">
+            <input type="text" id="message" placeholder="Type a message">
+            <button id="send">Send</button>
+        </div>
+    </div>
+
+    <!-- Container pour gérer l'appel -->
+    <div id="call-container">
+        <div id="call-buttons">
+            <button id="accept-call" class="accept">Accept</button>
+            <button id="reject-call">Reject</button>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:8080');
+        let username = '';
+        let localStream = null;
+        let remoteStream = null;
+        let peerConnection = null;
+        let currentChat = '';
+
+        const callContainer = document.getElementById('call-container');
+        const acceptButton = document.getElementById('accept-call');
+        const rejectButton = document.getElementById('reject-call');
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'user-list') {
+                const userList = document.getElementById('user-list');
+                userList.innerHTML = '';
+                data.users.forEach(user => {
+                    if (user !== username) {
+                        const userItem = document.createElement('div');
+                        userItem.textContent = `${user} `;
+                        const callButton = document.createElement('button');
+                        callButton.textContent = 'Call';
+                        callButton.onclick = () => requestCall(user);
+                        userItem.appendChild(callButton);
+                        userList.appendChild(userItem);
+                    }
+                });
+            }
+
+            if (data.type === 'call-request') {
+                showCallUI(data.from);
+            }
+
+            if (data.type === 'call-accepted') {
+                startCall(data.from);
+            }
+
+            if (data.type === 'call-rejected') {
+                alert(`${data.from} rejected your call.`);
+                stopCall();
+            }
+
+            if (data.type === 'chat-message') {
+                const messages = document.getElementById('messages');
+                const message = document.createElement('div');
+                message.classList.add('message');
+                message.classList.add('from');
+                message.textContent = `${data.from}: ${data.message}`;
+                messages.appendChild(message);
+                messages.scrollTop = messages.scrollHeight;
+            }
+        };
+
+        document.getElementById('connect').onclick = () => {
+            username = document.getElementById('username').value;
+            if (username) {
+                ws.send(JSON.stringify({ type: 'connect', username }));
+                document.getElementById('login-container').style.display = 'none';
+                document.getElementById('chat-container').style.display = 'flex';
+            }
+        };
+
+        document.getElementById('send').onclick = () => {
+            const message = document.getElementById('message').value;
+            if (message.trim()) {
+                ws.send(JSON.stringify({ type: 'chat-message', target: currentChat, username, message }));
+                document.getElementById('message').value = '';
+            }
+        };
+
+        function requestCall(target) {
+            ws.send(JSON.stringify({ type: 'request-call', username, target }));
+            currentChat = target;
+        }
+
+        function showCallUI(from) {
+            callContainer.style.display = 'block';
+            acceptButton.onclick = () => acceptCall(from);
+            rejectButton.onclick = () => rejectCall(from);
+        }
+
+        function acceptCall(from) {
+            callContainer.style.display = 'none';
+            peerConnection = new RTCPeerConnection();
+
+            // Accéder au microphone de l'utilisateur
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    localStream = stream;
+                    const audioTracks = localStream.getAudioTracks();
+                    if (audioTracks.length > 0) {
+                        peerConnection.addTrack(audioTracks[0], localStream);
+                    }
+                    peerConnection.createOffer()
+                        .then(offer => {
+                            return peerConnection.setLocalDescription(offer);
+                        })
+                        .then(() => {
+                            ws.send(JSON.stringify({ type: 'offer', username, target: from, offer: peerConnection.localDescription }));
+                        });
+                })
+                .catch(error => {
+                    console.error('Error accessing media devices.', error);
+                });
+        }
+
+        function rejectCall(from) {
+            ws.send(JSON.stringify({ type: 'reject-call', username, target: from }));
+            stopCall();
+        }
+
+        function startCall(from) {
+            peerConnection.ontrack = (event) => {
+                if (!remoteStream) {
+                    remoteStream = new MediaStream();
+                    remoteStream.addTrack(event.track);
+                    // Ici, tu peux ajouter une interface pour écouter l'appel vocal.
+                }
+            };
+        }
+
+        function stopCall() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            callContainer.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
